@@ -46,7 +46,7 @@ public class Player : Entity
             moveDirection *= diagonalMoveModifier;
         }
 
-        rb.velocity = moveDirection * moveSpeed;
+        rb.linearVelocity = moveDirection * moveSpeed;
     }
 
     private void CheckCollision()
@@ -54,13 +54,13 @@ public class Player : Entity
         Vector2 position = transform.position;
         BoxCollider2D collider = GetComponent<BoxCollider2D>();
         Vector2 size = collider.size;
-        Vector2 direction = rb.velocity.normalized;
+        Vector2 direction = rb.linearVelocity.normalized;
         float distance = skinWidth + 0.01f;
 
         RaycastHit2D hit = Physics2D.BoxCast(position, size, 0, direction, distance, LayerMask.GetMask("Wall"));
         if (hit)
         {
-            rb.velocity = Vector2.zero;
+            rb.linearVelocity = Vector2.zero;
         }
     }
 }

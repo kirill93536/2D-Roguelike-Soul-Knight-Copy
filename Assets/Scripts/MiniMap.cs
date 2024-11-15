@@ -4,7 +4,7 @@ using UnityEngine.UI;
 
 public class MiniMap : MonoBehaviour
 {
-    public List<Room> rooms;
+    /*public List<Room> rooms;
     public float miniMapScale;
     public Vector2 miniMapOffset;
     public Vector2 screenOffset;
@@ -77,7 +77,7 @@ public class MiniMap : MonoBehaviour
             Image miniMapRoom = Instantiate(miniMapRoomPrefab, miniMapContainer);
             miniMapRoom.rectTransform.localPosition = (Vector2)room.transform.position * miniMapScale;
         }
-    }
+    }*/
 }
 
 /*

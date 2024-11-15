@@ -1,74 +1,306 @@
-using System.Collections.Generic;
 using UnityEngine;
+using System.Collections.Generic;
 
 public class DungeonGenerator : MonoBehaviour
 {
-    public int roomCount;
-    public float roomOffset;
-    public float corridorOffset;
-    public Room roomPrefab;
+    [Header("Prefabs")]
+    public GameObject startRoomPrefab;
+    public GameObject endRoomPrefab;
+    public GameObject roomPrefab;
     public GameObject corridorPrefab;
-    public Vector2 spawnPosition;
+
+    [Header("Grid Settings")]
+    public int gridWidth = 10;
+    public int gridHeight = 10;
+    public float roomOffset = 10f;
+
+    [Header("Generation Settings")]
+    public int totalRooms = 10;
+    public int maxAdditionalInterconnections = 2;
+    public float interconnectionProbability = 0.5f;
+    public float loopProbability = 0.5f;
+    public int maxLoops = 3;
+    public bool unlimitedLoops = false;
+
+    [Header("Expansion Bias (0-1)")]
+    [Range(0f, 1f)] public float biasUp = 0.25f;
+    [Range(0f, 1f)] public float biasDown = 0.25f;
+    [Range(0f, 1f)] public float biasLeft = 0.25f;
+    [Range(0f, 1f)] public float biasRight = 0.25f;
+
+    [Header("Player and Enemies")]
     public Player player;
-
     public Enemy enemyPrefab;
-    public float offset;
-    public int minEnemiesToSpawn;
-    public int maxEnemiesToSpawn;
-
+    public int minEnemiesToSpawn = 1;
+    public int maxEnemiesToSpawn = 3;
+    public float enemySpawnOffset = 1f;
     public GameObject portalPrefab;
 
-    public List<Room> rooms;
-    public List<GameObject> spawnedCorridors = new List<GameObject>();
-    public Vector2[] directions = { Vector2.up, Vector2.right, Vector2.down, Vector2.left };
-    public HashSet<Vector2> usedPositions = new HashSet<Vector2>();
+    private Room[,] roomGrid;
+    private List<Room> spawnedRooms = new List<Room>();
+    private int currentRoomCount = 0;
+    private Room startRoom;
+    private Room endRoom;
 
-    private void Start()
+    void Start()
     {
-        CreateDungeon();
-        ConnectRooms(rooms, roomOffset);
-        TurnOffDoors(rooms);
-        CorridorSpawn(rooms, corridorOffset, corridorPrefab);
-        player.transform.position = rooms[0].transform.position;
+        roomGrid = new Room[gridWidth, gridHeight];
+        GenerateDungeon();
+        player.transform.position = startRoom.transform.position;
         SpawnEnemiesInRooms();
         SpawnPortal();
     }
 
-    public void ConnectRooms(List<Room> allRooms, float offset)
+    void GenerateDungeon()
     {
-        for (int i = 0; i < allRooms.Count; i++)
-        {
-            for (int j = 0; j < allRooms.Count; j++)
-            {
-                if (i != j)
-                {
-                    Room room1 = allRooms[i];
-                    Room room2 = allRooms[j];
-                    Vector2 room1Pos = room1.currentPosition;
-                    Vector2 room2Pos = room2.currentPosition;
+        NormalizeBiases();
 
-                    float distance = Vector2.Distance(room1Pos, room2Pos);
-                    if (distance == offset)
+        // Step 1: Generate the Start Room
+        int xStart = Random.Range(0, gridWidth);
+        int yStart = Random.Range(0, gridHeight);
+
+        Vector2 startPosition = new Vector2(xStart * roomOffset, yStart * roomOffset);
+        GameObject startRoomGO = Instantiate(startRoomPrefab, startPosition, Quaternion.identity);
+        startRoom = startRoomGO.GetComponent<Room>();
+        startRoom.gridX = xStart;
+        startRoom.gridY = yStart;
+        startRoom.isStartRoom = true;
+
+        roomGrid[xStart, yStart] = startRoom;
+        spawnedRooms.Add(startRoom);
+        currentRoomCount++;
+
+        Room lastRoomPlaced = startRoom;
+
+        while (currentRoomCount < totalRooms)
+        {
+            bool roomPlaced = false;
+
+            List<Room> baseRoomsToTry = new List<Room>();
+
+            if (currentRoomCount <= 2)
+            {
+                baseRoomsToTry.Add(lastRoomPlaced);
+            }
+            else
+            {
+                List<Room> possibleRooms = new List<Room>(spawnedRooms);
+                possibleRooms.RemoveAll(r => r.isStartRoom);
+                possibleRooms = ShuffleList(possibleRooms);
+
+                baseRoomsToTry.AddRange(possibleRooms);
+            }
+
+            foreach (Room baseRoom in baseRoomsToTry)
+            {
+                int attempts = 0;
+                while (attempts < 4)
+                {
+                    Direction direction = GetBiasedRandomDirection();
+                    int xNew, yNew;
+                    if (GetValidDirection(baseRoom.gridX, baseRoom.gridY, direction, out xNew, out yNew))
                     {
-                        if (room2Pos.x > room1Pos.x)
+                        Room newRoom = InstantiateRoomAt(xNew, yNew);
+                        ConnectRooms(baseRoom, newRoom, direction);
+                        currentRoomCount++;
+                        lastRoomPlaced = newRoom;
+
+                        if (currentRoomCount == totalRooms)
                         {
-                            room1.right = room2;
-                            room2.left = room1;
+                            TransformToEndRoom(newRoom);
                         }
-                        else if (room2Pos.x < room1Pos.x)
+
+                        roomPlaced = true;
+                        break;
+                    }
+                    else
+                    {
+                        attempts++;
+                    }
+                }
+                if (roomPlaced)
+                {
+                    break;
+                }
+            }
+
+            if (!roomPlaced)
+            {
+                Debug.LogWarning("No valid adjacent cells found for any room. Cannot place more rooms.");
+                break;
+            }
+        }
+
+        AddAdditionalInterconnections();
+        CreateLoops();
+    }
+
+    void NormalizeBiases()
+    {
+        float totalBias = biasUp + biasDown + biasLeft + biasRight;
+
+        if (totalBias <= 0f)
+        {
+            biasUp = biasDown = biasLeft = biasRight = 0.25f;
+            totalBias = 1f;
+        }
+
+        biasUp /= totalBias;
+        biasDown /= totalBias;
+        biasLeft /= totalBias;
+        biasRight /= totalBias;
+    }
+
+    Direction GetBiasedRandomDirection()
+    {
+        float randomValue = Random.Range(0f, 1f);
+
+        if (randomValue < biasUp)
+            return Direction.Top;
+        else if (randomValue < biasUp + biasDown)
+            return Direction.Bottom;
+        else if (randomValue < biasUp + biasDown + biasLeft)
+            return Direction.Left;
+        else
+            return Direction.Right;
+    }
+
+    bool GetValidDirection(int x, int y, Direction direction, out int xNew, out int yNew)
+    {
+        xNew = x;
+        yNew = y;
+
+        switch (direction)
+        {
+            case Direction.Top:
+                yNew += 1;
+                break;
+            case Direction.Bottom:
+                yNew -= 1;
+                break;
+            case Direction.Left:
+                xNew -= 1;
+                break;
+            case Direction.Right:
+                xNew += 1;
+                break;
+        }
+
+        if (xNew >= 0 && xNew < gridWidth && yNew >= 0 && yNew < gridHeight)
+        {
+            if (roomGrid[xNew, yNew] == null)
+                return true;
+        }
+        return false;
+    }
+
+    Room InstantiateRoomAt(int x, int y)
+    {
+        Vector2 position = new Vector2(x * roomOffset, y * roomOffset);
+        GameObject roomGO = Instantiate(roomPrefab, position, Quaternion.identity);
+        Room room = roomGO.GetComponent<Room>();
+        room.gridX = x;
+        room.gridY = y;
+
+        roomGrid[x, y] = room;
+        spawnedRooms.Add(room);
+        return room;
+    }
+
+    void ConnectRooms(Room roomA, Room roomB, Direction direction)
+    {
+        roomA.SetConnection(direction);
+        roomB.SetConnection(GetOppositeDirection(direction));
+
+        Vector2 corridorPosition = (roomA.transform.position + roomB.transform.position) / 2;
+        GameObject corridorGO = Instantiate(corridorPrefab, corridorPosition, Quaternion.identity);
+        Corridor corridor = corridorGO.GetComponent<Corridor>();
+
+        if (direction == Direction.Top || direction == Direction.Bottom)
+            corridor.SetOrientation(true);
+        else
+            corridor.SetOrientation(false);
+    }
+
+    Direction GetOppositeDirection(Direction direction)
+    {
+        switch (direction)
+        {
+            case Direction.Top: return Direction.Bottom;
+            case Direction.Bottom: return Direction.Top;
+            case Direction.Left: return Direction.Right;
+            case Direction.Right: return Direction.Left;
+            default: return Direction.Top;
+        }
+    }
+
+    void TransformToEndRoom(Room room)
+    {
+        Vector2 position = room.transform.position;
+        Destroy(room.gameObject);
+
+        GameObject endRoomGO = Instantiate(endRoomPrefab, position, Quaternion.identity);
+        endRoom = endRoomGO.GetComponent<Room>();
+        endRoom.gridX = room.gridX;
+        endRoom.gridY = room.gridY;
+        endRoom.isEndRoom = true;
+
+        endRoom.isConnectedTop = room.isConnectedTop;
+        endRoom.isConnectedBottom = room.isConnectedBottom;
+        endRoom.isConnectedLeft = room.isConnectedLeft;
+        endRoom.isConnectedRight = room.isConnectedRight;
+
+        roomGrid[room.gridX, room.gridY] = endRoom;
+        spawnedRooms.Remove(room);
+        spawnedRooms.Add(endRoom);
+    }
+
+    void AddAdditionalInterconnections()
+    {
+        foreach (Room room in spawnedRooms)
+        {
+            if (room.isStartRoom || room.isEndRoom)
+                continue;
+
+            int addedConnections = room.GetConnectionCount();
+
+            List<Direction> directions = new List<Direction> {
+                Direction.Top, Direction.Bottom, Direction.Left, Direction.Right
+            };
+
+            directions = ShuffleList(directions);
+
+            foreach (Direction direction in directions)
+            {
+                if (addedConnections >= maxAdditionalInterconnections)
+                    break;
+
+                int xNew = room.gridX;
+                int yNew = room.gridY;
+
+                switch (direction)
+                {
+                    case Direction.Top: yNew += 1; break;
+                    case Direction.Bottom: yNew -= 1; break;
+                    case Direction.Left: xNew -= 1; break;
+                    case Direction.Right: xNew += 1; break;
+                }
+
+                if (xNew >= 0 && xNew < gridWidth && yNew >= 0 && yNew < gridHeight)
+                {
+                    Room adjacentRoom = roomGrid[xNew, yNew];
+                    if (adjacentRoom != null && !AreRoomsConnected(room, adjacentRoom))
+                    {
+                        if (room.GetConnectionCount() >= maxAdditionalInterconnections)
+                            break;
+
+                        if (adjacentRoom.GetConnectionCount() >= maxAdditionalInterconnections)
+                            continue;
+
+                        if (Random.value < interconnectionProbability)
                         {
-                            room1.left = room2;
-                            room2.right = room1;
-                        }
-                        else if (room2Pos.y > room1Pos.y)
-                        {
-                            room1.top = room2;
-                            room2.bottom = room1;
-                        }
-                        else if (room2Pos.y < room1Pos.y)
-                        {
-                            room1.bottom = room2;
-                            room2.top = room1;
+                            ConnectRooms(room, adjacentRoom, direction);
+                            addedConnections++;
                         }
                     }
                 }
@@ -76,168 +308,132 @@ public class DungeonGenerator : MonoBehaviour
         }
     }
 
-    public void TurnOffDoors(List<Room> allRooms)
+    bool AreRoomsConnected(Room roomA, Room roomB)
     {
-        for (int i = 0; i < allRooms.Count; i++)
+        if (roomA.gridX == roomB.gridX)
         {
-            Room room = allRooms[i];
-            if (room.top != null)
+            if (roomA.gridY + 1 == roomB.gridY)
+                return roomA.isConnectedTop && roomB.isConnectedBottom;
+            if (roomA.gridY - 1 == roomB.gridY)
+                return roomA.isConnectedBottom && roomB.isConnectedTop;
+        }
+        else if (roomA.gridY == roomB.gridY)
+        {
+            if (roomA.gridX + 1 == roomB.gridX)
+                return roomA.isConnectedRight && roomB.isConnectedLeft;
+            if (roomA.gridX - 1 == roomB.gridX)
+                return roomA.isConnectedLeft && roomB.isConnectedRight;
+        }
+        return false;
+    }
+
+    void CreateLoops()
+    {
+        List<Room[]> potentialLoops = new List<Room[]>();
+
+        for (int x = 0; x < gridWidth - 1; x++)
+        {
+            for (int y = 0; y < gridHeight - 1; y++)
             {
-                room.topDoor.SetActive(false);
+                Room roomA = roomGrid[x, y];
+                Room roomB = roomGrid[x + 1, y];
+                Room roomC = roomGrid[x, y + 1];
+                Room roomD = roomGrid[x + 1, y + 1];
+
+                if (roomA != null && roomB != null && roomC != null && roomD != null)
+                {
+                    potentialLoops.Add(new Room[] { roomA, roomB, roomC, roomD });
+                }
             }
-            if (room.bottom != null)
+        }
+
+        int loopsCreated = 0;
+        foreach (Room[] loopRooms in potentialLoops)
+        {
+            if (!unlimitedLoops && loopsCreated >= maxLoops)
+                break;
+
+            if (Random.value < loopProbability)
             {
-                room.bottomDoor.SetActive(false);
-            }
-            if (room.left != null)
-            {
-                room.leftDoor.SetActive(false);
-            }
-            if (room.right != null)
-            {
-                room.rightDoor.SetActive(false);
+                if (!AreRoomsConnected(loopRooms[0], loopRooms[1]))
+                {
+                    if (CanAddConnection(loopRooms[0], loopRooms[1]))
+                        ConnectRooms(loopRooms[0], loopRooms[1], Direction.Right);
+                }
+
+                if (!AreRoomsConnected(loopRooms[1], loopRooms[3]))
+                {
+                    if (CanAddConnection(loopRooms[1], loopRooms[3]))
+                        ConnectRooms(loopRooms[1], loopRooms[3], Direction.Top);
+                }
+
+                if (!AreRoomsConnected(loopRooms[3], loopRooms[2]))
+                {
+                    if (CanAddConnection(loopRooms[3], loopRooms[2]))
+                        ConnectRooms(loopRooms[3], loopRooms[2], Direction.Left);
+                }
+
+                if (!AreRoomsConnected(loopRooms[2], loopRooms[0]))
+                {
+                    if (CanAddConnection(loopRooms[2], loopRooms[0]))
+                        ConnectRooms(loopRooms[2], loopRooms[0], Direction.Bottom);
+                }
+
+                loopsCreated++;
             }
         }
     }
 
-    public void CorridorSpawn(List<Room> rooms, float offset, GameObject corridorPrefab)
+    bool CanAddConnection(Room roomA, Room roomB)
     {
-        List<Vector2> corridorPositions = new List<Vector2>();
+        if (roomA.isStartRoom || roomA.isEndRoom || roomB.isStartRoom || roomB.isEndRoom)
+            return false;
 
-        foreach (Room currentRoom in rooms)
+        if (roomA.GetConnectionCount() >= maxAdditionalInterconnections)
+            return false;
+
+        if (roomB.GetConnectionCount() >= maxAdditionalInterconnections)
+            return false;
+
+        return true;
+    }
+
+    List<T> ShuffleList<T>(List<T> list)
+    {
+        for (int i = 0; i < list.Count; i++)
         {
-            if (currentRoom.right != null)
+            T temp = list[i];
+            int randomIndex = Random.Range(i, list.Count);
+            list[i] = list[randomIndex];
+            list[randomIndex] = temp;
+        }
+        return list;
+    }
+
+    void SpawnEnemiesInRooms()
+    {
+        foreach (Room room in spawnedRooms)
+        {
+            if (!room.isStartRoom && !room.isEndRoom)
             {
-                Vector2 corridorPos = currentRoom.currentPosition + new Vector2(offset, 0);
-                if (!corridorPositions.Contains(corridorPos))
-                {
-                    corridorPositions.Add(corridorPos);
-                    Quaternion rotation = Quaternion.Euler(0, 0, 0);
-                    GameObject corridor = Instantiate(corridorPrefab, corridorPos, rotation);
-                    corridor.transform.parent = currentRoom.transform;
-                }
-            }
-            if (currentRoom.left != null)
-            {
-                Vector2 corridorPos = currentRoom.currentPosition + new Vector2(-offset, 0);
-                if (!corridorPositions.Contains(corridorPos))
-                {
-                    corridorPositions.Add(corridorPos);
-                    Quaternion rotation = Quaternion.Euler(0, 0, 0);
-                    GameObject corridor = Instantiate(corridorPrefab, corridorPos, rotation);
-                    corridor.transform.parent = currentRoom.transform;
-                }
-            }
-            if (currentRoom.top != null)
-            {
-                Vector2 corridorPos = currentRoom.currentPosition + new Vector2(0, offset);
-                if (!corridorPositions.Contains(corridorPos))
-                {
-                    corridorPositions.Add(corridorPos);
-                    Quaternion rotation = Quaternion.Euler(0, 0, 90);
-                    GameObject corridor = Instantiate(corridorPrefab, corridorPos, rotation);
-                    corridor.transform.parent = currentRoom.transform;
-                }
-            }
-            if (currentRoom.bottom != null)
-            {
-                Vector2 corridorPos = currentRoom.currentPosition + new Vector2(0, -offset);
-                if (!corridorPositions.Contains(corridorPos))
-                {
-                    corridorPositions.Add(corridorPos);
-                    Quaternion rotation = Quaternion.Euler(0, 0, 90);
-                    GameObject corridor = Instantiate(corridorPrefab, corridorPos, rotation);
-                    corridor.transform.parent = currentRoom.transform;
-                }
+                room.SpawnEnemies(enemyPrefab, minEnemiesToSpawn, maxEnemiesToSpawn, enemySpawnOffset);
             }
         }
     }
 
-
-    public void CreateDungeon()
+    void SpawnPortal()
     {
-        rooms = new List<Room>();
+        GameObject portal = Instantiate(portalPrefab, endRoom.transform);
+        portal.transform.localScale = new Vector3(
+            portalPrefab.transform.localScale.x / endRoom.transform.localScale.x,
+            portalPrefab.transform.localScale.y / endRoom.transform.localScale.y,
+            portalPrefab.transform.localScale.z / endRoom.transform.localScale.z
+        );
 
-        GameObject dungeonHolder = new GameObject("Dungeon");
-        dungeonHolder.transform.position = Vector2.zero;
-
-        // Create initial room
-        Room initialRoom = Instantiate(roomPrefab);
-        initialRoom.SetRoomPositions(Vector2.zero);
-        initialRoom.transform.parent = dungeonHolder.transform;
-        usedPositions.Add(initialRoom.currentPosition);
-        rooms.Add(initialRoom);
-
-        // Generate remaining rooms
-        for (int i = 1; i < roomCount; i++)
+        foreach (Enemy enemy in endRoom.spawnedEnemies)
         {
-            Room previousRoom = rooms[i - 1];
-            Vector2 nextPosition = previousRoom.currentPosition + directions[Random.Range(0, directions.Length)] * roomOffset;
-
-            if (!usedPositions.Contains(nextPosition))
-            {
-                Room newRoom = Instantiate(roomPrefab);
-                newRoom.name += i.ToString();
-                newRoom.SetRoomPositions(nextPosition);
-                newRoom.transform.parent = dungeonHolder.transform;
-
-                // Set references to other rooms
-                if (nextPosition.y > previousRoom.currentPosition.y)
-                {
-                    newRoom.bottom = previousRoom;
-                    previousRoom.top = newRoom;
-                }
-                else if (nextPosition.y < previousRoom.currentPosition.y)
-                {
-                    newRoom.top = previousRoom;
-                    previousRoom.bottom = newRoom;
-                }
-                else if (nextPosition.x > previousRoom.currentPosition.x)
-                {
-                    newRoom.left = previousRoom;
-                    previousRoom.right = newRoom;
-                }
-                else if (nextPosition.x < previousRoom.currentPosition.x)
-                {
-                    newRoom.right = previousRoom;
-                    previousRoom.left = newRoom;
-                }
-
-                usedPositions.Add(nextPosition);
-                rooms.Add(newRoom);
-            }
-            else
-            {
-                i--;
-            }
+            Destroy(enemy.gameObject);
         }
-    }
-
-    public void SpawnEnemiesInRooms()
-    {
-        if (rooms.Count > 1)
-        {
-            for (int i = 1; i < rooms.Count; i++) // Start at index 1 to skip the first room
-            {
-                Room room = rooms[i];
-                room.SpawnEnemies(enemyPrefab, minEnemiesToSpawn, maxEnemiesToSpawn, offset);
-            }
-        }
-    }
-
-    public void SpawnPortal()
-    {
-        Room room = rooms[rooms.Count - 1];
-
-        GameObject portal = Instantiate(portalPrefab, room.transform);
-        portal.transform.localScale = new Vector3(portalPrefab.transform.localScale.x / rooms[rooms.Count - 1].transform.localScale.x,
-                                           portalPrefab.transform.localScale.y / rooms[rooms.Count - 1].transform.localScale.y,
-                                           portalPrefab.transform.localScale.z / rooms[rooms.Count - 1].transform.localScale.z);
-        
-        for(int i = 0; i < room.spawnedEnemies.Count; i++)
-        {
-            Destroy(room.spawnedEnemies[i].gameObject);
-        }
-        room.spawnedEnemies.Clear();
+        endRoom.spawnedEnemies.Clear();
     }
 }
