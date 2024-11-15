@@ -1,5 +1,3 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 
@@ -8,6 +6,9 @@ public class Entity : MonoBehaviour
     public int hp;
     public int stamina;
     public int mp;
+
+    public int maxHP;
+    public int maxMP;
 
     [HideInInspector] public UnityEvent onDie;
 
@@ -24,7 +25,7 @@ public class Entity : MonoBehaviour
     public virtual void ReduceMP(int mana)
     {
         mp -= mana;
-        if(mp <= 0)
+        if (mp <= 0)
         {
             mp = 0;
         }

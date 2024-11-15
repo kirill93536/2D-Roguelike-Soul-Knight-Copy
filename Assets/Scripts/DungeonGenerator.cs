@@ -245,10 +245,21 @@ public class DungeonGenerator : MonoBehaviour
         endRoom.gridY = room.gridY;
         endRoom.isEndRoom = true;
 
+        // Copy connections
         endRoom.isConnectedTop = room.isConnectedTop;
         endRoom.isConnectedBottom = room.isConnectedBottom;
         endRoom.isConnectedLeft = room.isConnectedLeft;
         endRoom.isConnectedRight = room.isConnectedRight;
+
+        // Set doors according to connections
+        if (endRoom.isConnectedTop)
+            endRoom.SetConnection(Direction.Top);
+        if (endRoom.isConnectedBottom)
+            endRoom.SetConnection(Direction.Bottom);
+        if (endRoom.isConnectedLeft)
+            endRoom.SetConnection(Direction.Left);
+        if (endRoom.isConnectedRight)
+            endRoom.SetConnection(Direction.Right);
 
         roomGrid[room.gridX, room.gridY] = endRoom;
         spawnedRooms.Remove(room);

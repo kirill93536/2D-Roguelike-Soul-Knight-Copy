@@ -22,11 +22,14 @@ public class Enemy : Entity
         canAttack = true;
         player = FindObjectOfType<Player>();
         projectilePooler = GetComponent<ProjectilePooler>();
+
+        // Subscribe to onDie event
+        onDie.AddListener(OnEnemyDeath);
     }
 
     private void Update()
     {
-        if(canAttack && playerInRoom)
+        if (canAttack && playerInRoom)
         {
             Attack();
             canAttack = false;
@@ -48,7 +51,7 @@ public class Enemy : Entity
             Vector2 direction = (player.transform.position - transform.position).normalized;
 
             Projectile projectile = projectileObject.GetComponent<Projectile>();
-            
+
             // Launch the projectile towards the player
             projectile.Launch(direction, stats.attackSpeed, 25f, stats.attackDamage, projectile.playerLayer);
         }
@@ -58,5 +61,14 @@ public class Enemy : Entity
     {
         yield return new WaitForSeconds(stats.attackDelay);
         canAttack = true;
+    }
+
+    // Method called when enemy dies
+    private void OnEnemyDeath()
+    {
+        // Add 12 mana to the player
+
+        int manaToAdd = Random.Range(1, 5);
+        player.AddMana(manaToAdd);
     }
 }

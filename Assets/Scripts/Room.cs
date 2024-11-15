@@ -27,6 +27,18 @@ public class Room : MonoBehaviour
     // Enemies in the room
     public List<Enemy> spawnedEnemies = new List<Enemy>();
 
+    // New variables for coins range
+    public int minCoins = 10;
+    public int maxCoins = 50;
+
+    // Reference to the player
+    private Player player;
+
+    private void Start()
+    {
+        player = FindObjectOfType<Player>();
+    }
+
     public void SetConnection(Direction direction)
     {
         switch (direction)
@@ -78,6 +90,12 @@ public class Room : MonoBehaviour
             {
                 spawnedEnemies.Remove(newEnemy);
                 TriggerDoorsCheck();
+
+                // Additional check if this is the end room
+                if (spawnedEnemies.Count == 0 && isEndRoom)
+                {
+                    CompleteLevel();
+                }
             });
         }
     }
@@ -88,6 +106,14 @@ public class Room : MonoBehaviour
         {
             LockAllDoors();
             StartEnemyAttack();
+        }
+        else
+        {
+            // If no enemies, directly complete the level if it's the end room
+            if (isEndRoom)
+            {
+                CompleteLevel();
+            }
         }
     }
 
@@ -115,6 +141,12 @@ public class Room : MonoBehaviour
         if (spawnedEnemies.Count == 0)
         {
             UnlockPreviousDoors();
+
+            // If this is the end room, complete the level
+            if (isEndRoom)
+            {
+                CompleteLevel();
+            }
         }
     }
 
@@ -156,5 +188,19 @@ public class Room : MonoBehaviour
         }
 
         return randomPos;
+    }
+
+    // New method to complete the level
+    private void CompleteLevel()
+    {
+        // Add 20 mana to the player
+        player.AddMana(20);
+
+        // Generate random coins within the specified range
+        int coinsAwarded = Random.Range(minCoins, maxCoins + 1);
+        player.AddCoins(coinsAwarded);
+
+        // Optionally, you can display a level completion UI or trigger other events here
+        Debug.Log("Level Completed! Mana +20 and Coins +" + coinsAwarded);
     }
 }

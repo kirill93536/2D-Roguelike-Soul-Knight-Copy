@@ -8,9 +8,25 @@ public class Player : Entity
 
     private Rigidbody2D rb;
 
+    private int coins;
+
+    private void Awake()
+    {
+        if(hp > 10)
+        {
+            maxHP = hp;
+        }
+        else
+        {
+            hp = 100;
+            maxHP = hp;
+        }
+    }
+
     private void Start()
     {
         rb = GetComponent<Rigidbody2D>();
+        LoadCoins();
     }
 
     private void Update()
@@ -62,5 +78,43 @@ public class Player : Entity
         {
             rb.linearVelocity = Vector2.zero;
         }
+    }
+
+    // Method to add mana
+    public void AddMana(int amount)
+    {
+        mp += amount;
+
+        if (mp > maxMP)
+        {
+            mp = maxMP;
+            return;
+        }
+    }
+
+    // Method to add coins
+    public void AddCoins(int amount)
+    {
+        coins += amount;
+        SaveCoins();
+    }
+
+    // Method to get current coins
+    public int GetCoins()
+    {
+        return coins;
+    }
+
+    // Save coins to PlayerPrefs
+    private void SaveCoins()
+    {
+        PlayerPrefs.SetInt("PlayerCoins", coins);
+        PlayerPrefs.Save();
+    }
+
+    // Load coins from PlayerPrefs
+    private void LoadCoins()
+    {
+        coins = PlayerPrefs.GetInt("PlayerCoins", 0);
     }
 }
